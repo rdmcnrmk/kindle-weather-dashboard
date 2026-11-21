@@ -1,0 +1,344 @@
+--[[
+    Dashboard Mode for Weather Lockscreen Plugin
+
+    Handles dashboard mode functionality including widget display,
+    refresh scheduling, and lifecycle management.
+
+    Author: Andreas Lösel
+    License: GNU AGPL v3
+--]]
+
+local UIManager = require("ui/uimanager")
+local PluginShare = require("pluginshare")
+local Device = require("device")
+local Screen = Device.screen
+local Blitbuffer = require("ffi/blitbuffer")
+local FrameContainer = require("ui/widget/container/framecontainer")
+local InputContainer = require("ui/widget/container/inputcontainer")
+local Geom = require("ui/geometry")
+local GestureRange = require("ui/gesturerange")
+local WeatherUtils = require("weather_utils")
+local logger = require("logger")
+
+local WeatherDashboard = {}
+
+function WeatherDashboard:start(weather_lockscreen)
+    if weather_lockscreen.dashboard_mode_enabled then
+        logger.info("WeatherLockscreen: Dashboard mode already active")
+        return
+    end
+
+    logger.info("WeatherLockscreen: Starting dashboard mode")
+    weather_lockscreen.dashboard_mode_enabled = true
+
+    -- Prevent device from auto-suspending
+    PluginShare.pause_auto_suspend = true
+    UIManager:preventStandby()
+    logger.info("WeatherLockscreen: Device sleep prevented")
+
+    -- Suspend frontlight intensity
+    WeatherUtils:suspendFrontlight(weather_lockscreen)
+
+    -- Start periodic AutoSuspend timer reset (every 3 minutes to stay ahead of Kindle's 4-minute t1 check)
+    self:scheduleAutosuspendReset(weather_lockscreen)
+
+    -- Apply the configured orientation, exactly like the sleep screen.
+    -- Done once here (not in showWidget, which also runs on every refresh).
+    weather_lockscreen.dashboard_orig_rotation = WeatherUtils:applyOrientation()
+
+    -- Show weather widget immediately
+    self:showWidget(weather_lockscreen)
+end
+
+function WeatherDashboard:stop(weather_lockscreen)
+    if not weather_lockscreen.dashboard_mode_enabled then
+        logger.dbg("WeatherLockscreen: Dashboard mode already stopped")
+        return
+    end
+
+    logger.info("WeatherLockscreen: Stopping dashboard mode")
+
+    -- Stop periodic AutoSuspend timer reset
+    self:unscheduleAutosuspendReset(weather_lockscreen)
+
+    -- Restore frontlight intensity
+    WeatherUtils:resumeFrontlight(weather_lockscreen)
+
+    -- Unschedule any pending refresh
+    if weather_lockscreen.dashboard_refresh_task then
+        UIManager:unschedule(weather_lockscreen.dashboard_refresh_task)
+    end
+
+    -- Close the dashboard widget
+    if weather_lockscreen.dashboard_widget then
+        UIManager:close(weather_lockscreen.dashboard_widget)
+        weather_lockscreen.dashboard_widget = nil
+    end
+
+    -- Restore the orientation we changed when the dashboard opened
+    if weather_lockscreen.dashboard_orig_rotation ~= nil then
+        WeatherUtils:restoreOrientation(weather_lockscreen.dashboard_orig_rotation)
+        weather_lockscreen.dashboard_orig_rotation = nil
+        UIManager:setDirty(nil, "full")
+    end
+
+    weather_lockscreen.dashboard_mode_enabled = false
+
+    -- Re-enable auto-suspend
+    PluginShare.pause_auto_suspend = false
+    UIManager:allowStandby()
+    logger.info("WeatherLockscreen: Device sleep re-enabled")
+end
+
+function WeatherDashboard:showWidget(weather_lockscreen)
+    if not weather_lockscreen.dashboard_mode_enabled then
+        logger.dbg("WeatherLockscreen: Dashboard mode disabled, not showing widget")
+        return
+    end
+
+    logger.info("WeatherLockscreen: Showing dashboard widget")
+
+    -- An in-place refresh has a dashboard widget already on screen. In that case
+    -- we keep the existing weather visible and swap it once the new one is built,
+    -- instead of flashing the loading icon. The loading icon is shown only on the
+    -- first start, when nothing of ours is displayed yet.
+    local is_refresh = weather_lockscreen.dashboard_widget ~= nil
+
+    -- Close any stale loading widget
+    if weather_lockscreen.loading_widget then
+        UIManager:close(weather_lockscreen.loading_widget)
+        weather_lockscreen.loading_widget = nil
+    end
+
+    if not is_refresh then
+        -- Show loading icon while fetching weather data (initial start only)
+        local DisplayHelper = require("display_helper")
+        weather_lockscreen.loading_widget = DisplayHelper:createLoadingWidget()
+        if weather_lockscreen.loading_widget then
+            UIManager:show(weather_lockscreen.loading_widget, "full")
+            logger.dbg("WeatherLockscreen: Loading widget displayed")
+        end
+    end
+
+    -- Force refresh to fetch new data
+    weather_lockscreen.refresh = true
+
+    -- Define function to create and show dashboard widget
+    local function dashboardShow()
+        local weather_widget, fallback = weather_lockscreen:createWeatherWidget()
+        if not weather_widget then
+            logger.warn("WeatherLockscreen: Failed to create weather widget")
+            -- Close the loading widget (shown on first start) before stopping
+            if weather_lockscreen.loading_widget then
+                UIManager:close(weather_lockscreen.loading_widget)
+                weather_lockscreen.loading_widget = nil
+            end
+            self:stop(weather_lockscreen)
+            return
+        end
+
+        local display_style = G_reader_settings:readSetting("weather_display_style") or "default"
+        local bg_color = Blitbuffer.COLOR_WHITE
+        if display_style == "nightowl" and not fallback then
+            bg_color = G_reader_settings:isTrue("night_mode") and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_BLACK
+        end
+
+        -- Create background container matching ScreenSaverWidget's internal FrameContainer structure
+        local background_widget = FrameContainer:new {
+            radius = 0,
+            bordersize = 0,
+            padding = 0,
+            margin = 0,
+            background = bg_color,
+            width = Screen:getWidth(),
+            height = Screen:getHeight(),
+            weather_widget,
+        }
+
+        local Input = Device.input
+        local screen_width = Screen:getWidth()
+        local screen_height = Screen:getHeight()
+
+        -- Capture references for closures
+        local plugin_instance = weather_lockscreen
+        local dashboard_module = self
+
+        -- Keep the old widget (if any) up until the new one is shown, then close
+        -- it, so a refresh swaps with no flash of the reader underneath.
+        local old_widget = weather_lockscreen.dashboard_widget
+
+        -- Create the dashboard widget as a modal fullscreen widget
+        -- This ensures it blocks all events from reaching widgets below (like ReaderUI)
+        weather_lockscreen.dashboard_widget = InputContainer:new {
+            dimen = Geom:new {
+                x = 0,
+                y = 0,
+                w = screen_width,
+                h = screen_height,
+            },
+            background_widget,
+        }
+
+        -- Set modal and covers_fullscreen to block events from reaching other widgets
+        -- Without these, taps can reach ReaderUI (status bar, menu areas) when reader is open
+        weather_lockscreen.dashboard_widget.modal = true
+        weather_lockscreen.dashboard_widget.covers_fullscreen = true
+        weather_lockscreen.dashboard_widget.dithered = true
+
+        -- Add tap handler to close and stop dashboard mode (like ScreenSaverWidget:onTap)
+        weather_lockscreen.dashboard_widget.onTap = function(self_widget, _, ges)
+            logger.info("WeatherLockscreen: Dashboard dismissed by tap")
+            dashboard_module:stop(plugin_instance)
+            return true
+        end
+
+        -- Add close handler (can be called by system events)
+        weather_lockscreen.dashboard_widget.onClose = function()
+            logger.info("WeatherLockscreen: Dashboard onClose called")
+            dashboard_module:stop(plugin_instance)
+            return true
+        end
+
+        -- Add key press handler for non-touch devices
+        weather_lockscreen.dashboard_widget.onAnyKeyPressed = function()
+            logger.info("WeatherLockscreen: Dashboard dismissed by key press")
+            dashboard_module:stop(plugin_instance)
+            return true
+        end
+
+        -- Register tap gesture for touch devices
+        if Device:isTouchDevice() then
+            weather_lockscreen.dashboard_widget.ges_events = {
+                Tap = {
+                    GestureRange:new {
+                        ges = "tap",
+                        range = Geom:new {
+                            x = 0, y = 0,
+                            w = screen_width,
+                            h = screen_height,
+                        }
+                    }
+                }
+            }
+        end
+
+        -- Register key events for non-touch devices
+        if Device:hasKeys() then
+            weather_lockscreen.dashboard_widget.key_events = {
+                AnyKeyPressed = { { Input.group.Any } }
+            }
+        end
+
+        UIManager:show(weather_lockscreen.dashboard_widget, "full")
+
+        -- Now that the new widget is up, close the previous one (refresh) and any
+        -- loading widget (first start), so there's never a blank/loading frame.
+        if old_widget then
+            UIManager:close(old_widget)
+        end
+        if weather_lockscreen.loading_widget then
+            UIManager:close(weather_lockscreen.loading_widget)
+            weather_lockscreen.loading_widget = nil
+            logger.dbg("WeatherLockscreen: Loading widget closed")
+        end
+
+        -- Trigger screen refresh (like TRMNL does)
+        UIManager:setDirty(weather_lockscreen.dashboard_widget, "full")
+        UIManager:forceRePaint()
+        logger.info("WeatherLockscreen: Dashboard widget displayed")
+
+        -- Schedule next refresh
+        self:scheduleNextRefresh(weather_lockscreen)
+    end
+
+    -- Create weather widget
+    if WeatherUtils:wifiEnableActionTurnOn() then
+        logger.dbg("WeatherLockscreen: Creating dashboard widget (will wait for network if needed)")
+
+        -- Use safe wrapper to go online with proper error handling
+        -- call_after_wifi_action = true to respect wifi_disable_action setting (saves power between refreshes)
+        WeatherUtils:safeGoOnlineToRun(
+            function()
+                logger.dbg("WeatherLockscreen: Network is online, showing dashboard")
+                dashboardShow()
+            end,
+            function()
+                -- Fallback: show dashboard anyway with potentially cached data
+                logger.dbg("WeatherLockscreen: Network connection failed, showing dashboard with cached data")
+                dashboardShow()
+            end,
+            true, -- suppress network messages
+            true  -- call afterWifiAction when done (respects wifi_disable_action)
+        )
+    else
+        logger.dbg("WeatherLockscreen: Creating dashboard widget (will not wait for network)")
+        dashboardShow()
+    end
+end
+
+function WeatherDashboard:scheduleNextRefresh(weather_lockscreen)
+    if not weather_lockscreen.dashboard_mode_enabled then
+        return
+    end
+
+    local interval = WeatherUtils:getEffectiveRefreshInterval("dashboard")
+    if interval > 0 then
+        logger.info("WeatherLockscreen: Scheduling next dashboard refresh in", interval, "seconds")
+        UIManager:scheduleIn(require("fridge_model").nextDelay(os.time(), interval), weather_lockscreen.dashboard_refresh_task)
+    else
+        logger.warn("WeatherLockscreen: Dashboard mode enabled but interval is 0, stopping")
+        self:stop(weather_lockscreen)
+    end
+end
+
+-- Schedule periodic AutoSuspend timer reset every 3 minutes
+-- This prevents AutoSuspend's Kindle t1 timer (checks every 4 min) from calculating negative delays
+function WeatherDashboard:scheduleAutosuspendReset(weather_lockscreen)
+    if not weather_lockscreen.autosuspend_reset_task then
+        weather_lockscreen.autosuspend_reset_task = function()
+            if weather_lockscreen.dashboard_mode_enabled then
+                UIManager:broadcastEvent(require("ui/event"):new("InputEvent"))
+                logger.dbg("WeatherLockscreen: Broadcast InputEvent to reset AutoSuspend timers")
+                -- Reschedule for 3 minutes later
+                UIManager:scheduleIn(180, weather_lockscreen.autosuspend_reset_task)
+            end
+        end
+    end
+
+    -- Broadcast immediately and schedule first check in 3 minutes
+    UIManager:broadcastEvent(require("ui/event"):new("InputEvent"))
+    logger.dbg("WeatherLockscreen: Initial InputEvent broadcast, scheduling periodic resets every 3 minutes")
+    UIManager:scheduleIn(180, weather_lockscreen.autosuspend_reset_task)
+end
+
+-- Unschedule the periodic AutoSuspend timer reset
+function WeatherDashboard:unscheduleAutosuspendReset(weather_lockscreen)
+    if weather_lockscreen.autosuspend_reset_task then
+        UIManager:unschedule(weather_lockscreen.autosuspend_reset_task)
+        logger.dbg("WeatherLockscreen: Unscheduled AutoSuspend timer reset task")
+    end
+end
+
+function WeatherDashboard:onSuspend(weather_lockscreen)
+    -- Unschedule dashboard mode tasks during suspend
+    if weather_lockscreen.dashboard_mode_enabled then
+        if weather_lockscreen.dashboard_refresh_task then
+            UIManager:unschedule(weather_lockscreen.dashboard_refresh_task)
+            logger.dbg("WeatherLockscreen: Dashboard refresh task unscheduled for suspend")
+        end
+        self:unscheduleAutosuspendReset(weather_lockscreen)
+        return true -- Indicates dashboard handled suspend
+    end
+    return false
+end
+
+function WeatherDashboard:onResume(weather_lockscreen)
+    -- Stop dashboard if it was active before resume
+    if weather_lockscreen.dashboard_mode_enabled and weather_lockscreen.dashboard_refresh_task then
+        self:stop(weather_lockscreen)
+        return true -- Indicates dashboard handled resume
+    end
+    return false
+end
+
+return WeatherDashboard
