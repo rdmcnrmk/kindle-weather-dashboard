@@ -1,7 +1,7 @@
 [project]
-name = "kindle-weather-dashboard"
-version = "1.1.0"
-description = "An English, serverless e-ink weather dashboard for a jailbroken Kindle Paperwhite 3"
+name = "kindle-home-dashboard"
+version = "1.2.13"
+description = "An English, serverless home dashboard with weather and robot controls for a jailbroken Kindle Paperwhite 3"
 requires-python = ">=3.11"
 license = "AGPL-3.0-or-later"
 

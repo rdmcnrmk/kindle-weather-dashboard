@@ -88,7 +88,7 @@ class WeatherTests(unittest.TestCase):
         self.assertIn('Thunderstorm',self.render(f).summary)
     def test_no_credentials_or_foreign_weather_provider_fallback(self):
         main=(PLUGIN/'main.lua').read_text()
-        begin=main.index('function WeatherLockscreen:createWeatherWidget()')
+        begin=main.index('function WeatherLockscreen:createWeatherWidget(')
         end=main.index('-- Choose the refresh mechanism',begin)
         self.assertNotIn('WeatherAPI:',main[begin:end])
         self.assertIn('default_api_key = ""',main)

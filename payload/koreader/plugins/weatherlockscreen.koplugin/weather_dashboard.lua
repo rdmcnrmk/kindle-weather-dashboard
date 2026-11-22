@@ -22,7 +22,8 @@ local logger = require("logger")
 
 local WeatherDashboard = {}
 
-function WeatherDashboard:start(weather_lockscreen)
+function WeatherDashboard:start(weather_lockscreen,cache_only)
+    require('fridge_power').noteActivity()
     if weather_lockscreen.dashboard_mode_enabled then
         logger.info("WeatherLockscreen: Dashboard mode already active")
         return
@@ -47,7 +48,7 @@ function WeatherDashboard:start(weather_lockscreen)
     weather_lockscreen.dashboard_orig_rotation = WeatherUtils:applyOrientation()
 
     -- Show weather widget immediately
-    self:showWidget(weather_lockscreen)
+    self:showWidget(weather_lockscreen,cache_only)
 end
 
 function WeatherDashboard:stop(weather_lockscreen)
@@ -90,7 +91,7 @@ function WeatherDashboard:stop(weather_lockscreen)
     logger.info("WeatherLockscreen: Device sleep re-enabled")
 end
 
-function WeatherDashboard:showWidget(weather_lockscreen)
+function WeatherDashboard:showWidget(weather_lockscreen,cache_only)
     if not weather_lockscreen.dashboard_mode_enabled then
         logger.dbg("WeatherLockscreen: Dashboard mode disabled, not showing widget")
         return
@@ -121,11 +122,13 @@ function WeatherDashboard:showWidget(weather_lockscreen)
     end
 
     -- Force refresh to fetch new data
-    weather_lockscreen.refresh = true
+    if not cache_only then weather_lockscreen.refresh = true end
 
     -- Define function to create and show dashboard widget
     local function dashboardShow()
-        local weather_widget, fallback = weather_lockscreen:createWeatherWidget()
+        weather_lockscreen.prefer_cache = cache_only==true
+        local weather_widget, fallback = weather_lockscreen:createWeatherWidget(true)
+        weather_lockscreen.prefer_cache = false
         if not weather_widget then
             logger.warn("WeatherLockscreen: Failed to create weather widget")
             -- Close the loading widget (shown on first start) before stopping
@@ -135,6 +138,9 @@ function WeatherDashboard:showWidget(weather_lockscreen)
             end
             self:stop(weather_lockscreen)
             return
+        end
+        if weather_widget.onDashboardTap then
+            weather_widget.page = weather_lockscreen.dashboard_page or 'weather'
         end
 
         local display_style = G_reader_settings:readSetting("weather_display_style") or "default"
@@ -187,6 +193,13 @@ function WeatherDashboard:showWidget(weather_lockscreen)
 
         -- Add tap handler to close and stop dashboard mode (like ScreenSaverWidget:onTap)
         weather_lockscreen.dashboard_widget.onTap = function(self_widget, _, ges)
+            if ges and ges.pos then
+                if weather_widget.onDashboardTap then
+                    local handled = weather_widget:onDashboardTap(ges.pos.x, ges.pos.y)
+                    plugin_instance.dashboard_page = weather_widget.page
+                    if handled then return true end
+                end
+            end
             logger.info("WeatherLockscreen: Dashboard dismissed by tap")
             dashboard_module:stop(plugin_instance)
             return true
@@ -252,11 +265,11 @@ function WeatherDashboard:showWidget(weather_lockscreen)
     end
 
     -- Create weather widget
-    if WeatherUtils:wifiEnableActionTurnOn() then
+    if not cache_only and WeatherUtils:wifiEnableActionTurnOn() then
         logger.dbg("WeatherLockscreen: Creating dashboard widget (will wait for network if needed)")
 
         -- Use safe wrapper to go online with proper error handling
-        -- call_after_wifi_action = true to respect wifi_disable_action setting (saves power between refreshes)
+        -- Keep interactive Wi-Fi on; the panel watchdog handles sleep separately.
         WeatherUtils:safeGoOnlineToRun(
             function()
                 logger.dbg("WeatherLockscreen: Network is online, showing dashboard")
@@ -268,7 +281,7 @@ function WeatherDashboard:showWidget(weather_lockscreen)
                 dashboardShow()
             end,
             true, -- suppress network messages
-            true  -- call afterWifiAction when done (respects wifi_disable_action)
+            false -- do not switch Wi-Fi off behind the interactive dashboard
         )
     else
         logger.dbg("WeatherLockscreen: Creating dashboard widget (will not wait for network)")

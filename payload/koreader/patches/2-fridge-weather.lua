@@ -4,7 +4,7 @@ https://github.com/muffism/kindle-weather-station
 Runs every time KOReader starts:
   1. First run only: picks the "Week" display style, a 30-minute dashboard
      refresh, hourly refreshes while asleep, the weather as the sleep screen,
-     sleeping again 1 minute after you wake it, and "turn Wi-Fi on by itself"
+     sleeping after the configured user idle period, and "turn Wi-Fi on by itself"
      (set your city in the Weather Lockscreen menu).
   2. Clears the screen inversion left by the Kindle's own Dark Mode, so the
      screen is black on white. Turns the frontlight off.
@@ -15,9 +15,9 @@ Runs every time KOReader starts:
        on the charger -> the live weather dashboard (Kindle stays awake);
        on battery     -> sleeps with the weather as its sleep screen and wakes
                          every hour to refresh it (about 25 s awake each time).
-     Unplugging while the dashboard is open puts it to sleep the same way.
-  5. Wi-Fi: turned on at every wake (the hourly refresh needs it), and off
-     again after 5 minutes awake, unless an SSH session is open.
+     On battery, the watchdog waits for the configured user idle period.
+  5. Wi-Fi: turned on at every wake; protected during interaction, then off
+     before sleep. SSH sessions also protect the awake Wi-Fi cutoff.
   6. Logs the battery to koreader/battery-log.txt at every sleep and wake,
      and every 5 minutes while awake.
 
@@ -107,10 +107,13 @@ local function sleepWithWeather(reason)
         logger.warn("KindleWeather: automatic sleep skipped; no wakeup manager")
         return false
     end
+    if not require('fridge_power').canAutoSleep() then return false end
     if wl.dashboard_mode_enabled then
         UIManager:broadcastEvent(Event:new("ToggleWeatherDashboard"))   -- close dashboard first
     end
-    UIManager:scheduleIn(2, function() UIManager:suspend() end)
+    UIManager:scheduleIn(2, function()
+        if require('fridge_power').canAutoSleep() then UIManager:suspend() end
+    end)
 end
 
 -- 5 + 6. watchdog (every 30 s while awake), Wi-Fi at wake, battery log
@@ -169,7 +172,9 @@ do
             pcall(function() UIManager.event_hook:execute("InputEvent") end)
         end
         -- count awake time only: time asleep must not count towards the 5 minutes
-        if on then
+        if not require('fridge_power').canAutoSleep() then
+            wifi_on_secs = 0
+        elseif on then
             wifi_on_secs = wifi_on_secs + 30
             if wifi_on_secs >= WIFI_ON_MAX and not flag("wifi-always-on") and not ssh then
                 logger.info("weather-station: Wi-Fi on for 90 s awake, turning it off")
@@ -244,10 +249,10 @@ UIManager:scheduleIn(4, function()
         return
     end
     logger.info("KindleWeather: opening initial dashboard")
+    require('fridge_power').noteActivity()
     UIManager:broadcastEvent(Event:new("ToggleWeatherDashboard"))
     if not onExternalPower() then
-        -- Show the result first, then enter the weather sleep screen.
-        UIManager:scheduleIn(20, function() sleepWithWeather("started on battery") end)
+        -- The watchdog waits for actual user inactivity; no fixed boot sleep.
         return
     end
     -- The Kindle status-bar clock can get drawn over us during boot;

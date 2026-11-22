@@ -23,8 +23,16 @@ the original native module, including when the child process fails.
 
 The startup patch activates only when the dashboard flag exists. It saves reader
 preferences once, applies dashboard settings, turns off the frontlight, and shows
-the initial weather view. On battery, it then transitions into the weather sleep
-screen. Automatic sleep is skipped if the wake manager is absent.
+the initial weather view. On battery, it transitions into the weather sleep
+screen after five minutes of user inactivity, checked every 30 seconds. Dashboard
+taps, dialog opening, login edits and manual wake reset the idle deadline. Short
+network leases do not shorten it; automatic RTC refreshes do not reset it.
+Automatic sleep is skipped if the wake manager is absent.
+
+Manual wake in panel mode queues the interactive dashboard after KOReader clears
+its sleep screen, retaining the selected tab and initially using cached weather.
+A delayed OutOfScreenSaver notification retries that queued opening; suspend
+cancels it. This path does not schedule automatic sleep itself.
 
 The first scheduled wake uses a short two-minute test. A real RTC resume marks
 that test as observed, after which future alarms use hourly boundaries. During a

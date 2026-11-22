@@ -1,10 +1,10 @@
 # Continue in Codex and work with GitHub
 
-Repository: https://github.com/rdmcnrmk/kindle-weather-dashboard
+Repository: https://github.com/rdmcnrmk/kindle-home-dashboard
 
 ## Codex handoff
 
-Open the **kindle-weather-dashboard** folder as your Codex project. This folder
+Open the **kindle-home-dashboard** folder as your Codex project. This folder
 is self-contained; no files from the surrounding chat workspace are required.
 AGENTS.md provides the working context and docs/DEVICE-VALIDATION.md records what
 is actually known about the hardware.
@@ -24,8 +24,8 @@ the GitHub account's ID-based noreply address; global Git settings are unchanged
 To work on another computer, clone the repository:
 
 ```bash
-git clone https://github.com/rdmcnrmk/kindle-weather-dashboard.git
-cd kindle-weather-dashboard
+git clone https://github.com/rdmcnrmk/kindle-home-dashboard.git
+cd kindle-home-dashboard
 ```
 
 A downloaded source ZIP excludes Git history. Prefer cloning the repository

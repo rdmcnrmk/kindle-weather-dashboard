@@ -31,4 +31,22 @@ class PowerTests(unittest.TestCase):
             local done={readSetting=function()return true end};
             return Power.refreshDelay(100,3600,pending),Power.refreshDelay(100,3600,done)''')
         self.assertEqual(first,120);self.assertEqual(normal,3500)
+    def test_interaction_lease_expires_and_releases_without_changing_rtc(self):
+        self.lua.execute('now=1000;os.time=function()return now end;Power.holdInteraction(300)')
+        self.assertTrue(self.lua.eval('Power.isInteracting()'))
+        self.lua.execute('now=1300')
+        self.assertFalse(self.lua.eval('Power.isInteracting()'))
+        self.lua.execute('Power.holdInteraction(120);Power.releaseInteraction()')
+        self.assertFalse(self.lua.eval('Power.isInteracting()'))
+        self.assertEqual(self.lua.eval('Power.refreshDelay(1300,3600,{readSetting=function()return false end})'),120)
+    def test_idle_deadline_is_independent_of_short_network_lease(self):
+        self.lua.execute('now=1000;os.time=function()return now end;Power.noteActivity()')
+        self.lua.execute('now=1100;Power.holdInteraction(120);Power.releaseInteraction()')
+        self.assertFalse(self.lua.eval('Power.canAutoSleep()'))
+        self.lua.execute('now=1299')
+        self.assertFalse(self.lua.eval('Power.canAutoSleep()'))
+        self.lua.execute('now=1300')
+        self.assertTrue(self.lua.eval('Power.canAutoSleep()'))
+        self.lua.execute('Power.holdInteraction(300);now=1301')
+        self.assertFalse(self.lua.eval('Power.canAutoSleep()'))
 if __name__=='__main__':unittest.main(verbosity=2)

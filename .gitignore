@@ -16,5 +16,6 @@ device-backups/
 *.mobi
 settings.reader.lua*
 fridge-weather*.json
+dreamehome-session.json*
 fridge-diagnostics.txt
 hava-panosu-installation.json

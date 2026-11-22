@@ -10,6 +10,7 @@ local Widget=require('ui/widget/widget')
 local Model=require('fridge_model')
 local Source=require('fridge_source')
 local Config=require('fridge_config')
+local Tabs=require('dashboard_tabs')
 local logger=require('logger')
 local Screen=Device.screen
 local ROOT=(debug.getinfo(1,'S').source:match('^@(.*/)')) or 'plugins/weatherlockscreen.koplugin/'
@@ -30,8 +31,29 @@ end
 local View=Widget:extend{}
 function View:init()
     self.dimen=Geom:new{x=0,y=0,w=Screen:getWidth(),h=Screen:getHeight()}
+    self.page='weather'
 end
 function View:getSize() return self.dimen end
+function View:onDashboardTap(x,y)
+    if not self.interactive then return false end
+    require('fridge_power').noteActivity()
+    x,y=Tabs.point(x,y,self.dimen.w,self.dimen.h)
+    local tab=Tabs.hitTab(x,y)
+    if tab then
+        self.page=tab
+        -- nil only refreshes the existing framebuffer in KOReader; it does
+        -- not mark any window for painting. Our view is nested in the modal
+        -- dashboard, so mark the top-level windows before refreshing.
+        require('ui/uimanager'):setDirty('all','full')
+    elseif self.page=='vacuum' then
+        local controls=require('dreame_controls')
+        local n=Tabs.hitVacuum(x,y)
+        if n and controls.enabled() then controls.press(n)
+        elseif controls.enabled() and Tabs.hitCheck(x,y) then controls.check()
+        elseif not controls.enabled() and Tabs.hitConnect(x,y) then controls.connect() end
+    end
+    return tab~=nil or self.page~='weather'
+end
 function View:_paint(bb,x0,y0)
     local scale=math.min(self.dimen.w/1072,self.dimen.h/1448)
     local xpad=x0+(self.dimen.w-1072*scale)/2
@@ -54,8 +76,50 @@ function View:_paint(bb,x0,y0)
         local iw=ImageWidget:new{file=ROOT..'icons/week/'..(name or 'cloudy')..'.svg',width=P(w),height=P(w),alpha=true,original_in_nightmode=false}
         iw:getSize();iw:paintTo(bb,X(x),Y(y));iw:free()
     end
-    local v=Model.make(self.data,self.fetched,os.time(),Config)
     bb:paintRect(x0,y0,self.dimen.w,self.dimen.h,C.white)
+    if self.interactive then
+        for i,item in ipairs(Tabs.items)do
+            local left,top,width,height=Tabs.tabRect(i)
+            local selected=self.page==item.id
+            rect(left,top,width,height,selected and C.ink or C.light)
+            text(left+width/2,top+29,item.label,32,true,selected and C.white or C.ink,'center',width-32)
+        end
+    else
+        text(64,44,'WEATHER · SLEEP SCREEN',24,true,C.muted,nil,944)
+        text(64,88,'Press power to reopen Weather and Vacuum controls.',22,false,C.muted,nil,944)
+    end
+    if self.page=='vacuum' then
+        local enabled=G_reader_settings:readSetting('dreame_controls_enabled')==true
+        text(64,204,'Dreame L50 Pro Ultra',48,true,nil,nil,944)
+        text(64,280,enabled and 'Choose where to clean' or 'Connect your Dreamehome account to begin',27,false,C.muted,nil,944)
+        local labels={'Clean all','Kitchen','Dining'}
+        local details={'Current floor · Current cleaning settings','Your Kitchen shortcut','Your Dining shortcut'}
+        for i,label in ipairs(labels)do
+            local left,top,width,height=Tabs.buttonRect(i)
+            rect(left,top,width,height,C.light)
+            text(left+48,top+40,label,48,true,enabled and C.ink or C.muted,nil,width-96)
+            text(left+48,top+112,details[i],25,false,C.muted,nil,width-96)
+        end
+        if not enabled then
+            rect(64,1152,944,104,C.ink)
+            text(536,1184,'Connect Dreamehome',32,true,C.white,'center',880)
+        else
+            rect(64,1120,944,72,C.light)
+            text(536,1141,'Check connection',27,true,C.ink,'center',880)
+            for i,line in ipairs(require('dreame_controls').statusLines())do
+                text(64,1210+(i-1)*30,line,23,false,C.muted,nil,944)
+            end
+        end
+        rule(1320)
+        text(536,1352,'Wake with the power button to use the tabs and controls.',22,false,C.muted,'center',944)
+        return
+    end
+    -- Fit the complete weather layout beneath the tab bar, without removing
+    -- forecast rows or moving robot controls into the weather page.
+    xpad=xpad+53.6*scale
+    ypad=ypad+144*scale
+    scale=scale*.9
+    local v=Model.make(self.data,self.fetched,os.time(),Config)
     text(64,48,v.city,21,true)
     text(1008,50,'HOME WEATHER',16,false,C.muted,'right')
     text(60,86,v.day,112,true)
@@ -123,8 +187,8 @@ function View:paintTo(bb,x,y)
     if not ok then logger.err('KindleWeather: draw failed',err);error(err) end
 end
 local Display={}
-function Display:create(plugin)
+function Display:create(plugin,interactive)
     local data,fetched=Source.fetch(plugin)
-    return View:new{data=data,fetched=fetched}
+    return View:new{data=data,fetched=fetched,interactive=interactive==true}
 end
 return Display

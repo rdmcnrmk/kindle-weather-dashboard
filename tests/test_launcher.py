@@ -45,4 +45,10 @@ fi
         result,after,commands,during=self.execute(reader_exit=42)
         self.assertEqual(result.returncode,42)
         self.assertIn('ad_screensaver',after)
+    def test_interrupted_interactive_session_restores_native_screen_and_usb(self):
+        result,after,commands,during=self.execute(reader_exit=130)
+        self.assertEqual(result.returncode,130)
+        self.assertIn('ad_screensaver',after)
+        self.assertIn('usb',during)
+        self.assertNotIn('unload usb',commands)
 if __name__=='__main__':unittest.main(verbosity=2)

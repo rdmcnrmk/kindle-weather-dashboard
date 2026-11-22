@@ -14,7 +14,7 @@ function C.enter()
         weather_periodic_refresh_rtc=config.refresh_seconds,
         weather_periodic_refresh_rtc_charging=config.refresh_seconds,
         weather_active_sleep_min_battery=config.minimum_battery,
-        auto_suspend_timeout_seconds=60,wifi_enable_action='turn_on',wifi_disable_action='leave_on'}
+        auto_suspend_timeout_seconds=config.interactive_idle_seconds or 300,wifi_enable_action='turn_on',wifi_disable_action='leave_on'}
     if not G_reader_settings:readSetting('fridge_saved_settings') then
         local saved={}
         for k in pairs(values) do

@@ -1,5 +1,15 @@
 # Sources and changes
 
+Dreamehome controls 1.2.0, 2026-11-22:
+- Added an experimental Lua client adapting protocol/signature/shortcut mappings
+  from Tasshack/dreame-vacuum (Copyright (c) 2022 Tasshack, MIT).
+  https://github.com/Tasshack/dreame-vacuum
+  Full upstream notice: payload/koreader/plugins/weatherlockscreen.koplugin/DREAME-LICENSE.txt.
+- Included certifi's public Mozilla CA bundle and CERTIFI-LICENSE.txt in the plugin
+  for peer verification. https://github.com/certifi/python-certifi
+- Added on-demand UI, private session storage and synthetic protocol tests.
+  Hardware/cloud validation remains pending. No robot runtime or account data is bundled.
+
 This package contains a modified copy of Kindle Weather Station v1.1.0:
 https://github.com/muffism/kindle-weather-station/releases/tag/v1.1.0
 Upstream release SHA-256: d8beed4e52301c8176299faa73520b950156489dee96dd67ae50f90a6b6bed04

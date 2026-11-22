@@ -34,7 +34,7 @@ def archive(output, files):
     with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as result:
         for path in sorted(set(files)):
             relative = path.relative_to(ROOT).as_posix()
-            info = zipfile.ZipInfo('kindle-weather-dashboard/' + relative, (2020, 1, 1, 0, 0, 0))
+            info = zipfile.ZipInfo('kindle-home-dashboard/' + relative, (2020, 1, 1, 0, 0, 0))
             info.create_system = 3
             info.external_attr = ((0o100755 if path.suffix in {'.sh', '.command'} else 0o100644) << 16)
             result.writestr(info, path.read_bytes(), compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
@@ -68,12 +68,12 @@ def main():
     dist = ROOT / 'dist'
     dist.mkdir(exist_ok=True)
     files = [ROOT / p for p in ROOT_FILES] + tree_files('payload') + tree_files('docs')
-    archive(dist / ('kindle-weather-dashboard-' + version() + '.zip'), files)
+    archive(dist / ('kindle-home-dashboard-' + version() + '.zip'), files)
     if args.source:
         source_files = [ROOT / p for p in SOURCE_FILES]
         for directory in ['payload', 'tests', 'scripts', 'docs', '.github']:
             source_files += tree_files(directory)
-        archive(dist / ('kindle-weather-dashboard-' + version() + '-source.zip'), source_files)
+        archive(dist / ('kindle-home-dashboard-' + version() + '-source.zip'), source_files)
     return 0
 
 

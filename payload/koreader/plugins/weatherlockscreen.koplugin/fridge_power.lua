@@ -1,5 +1,17 @@
 -- Probe real Kindle power integration; never assume every jailbroken Kindle has it.
 local M={}
+-- An expiring in-memory lease protects deliberate user interaction from the
+-- panel watchdog. No persistent flag and no background wake/suspend job.
+local interaction_until=0
+local idle_until=0
+function M.noteActivity()
+    local seconds=tonumber(require('fridge_config').interactive_idle_seconds) or 300
+    idle_until=os.time()+math.max(60,math.min(3600,seconds))
+end
+function M.canAutoSleep() return os.time()>=idle_until and not M.isInteracting() end
+function M.holdInteraction(seconds) interaction_until=os.time()+(seconds or 300) end
+function M.releaseInteraction() interaction_until=0 end
+function M.isInteracting() return os.time()<interaction_until end
 function M.prepare(device)
     if device.wakeup_mgr then return device.wakeup_mgr,'ready' end
     local ok,power=pcall(function()return device:getPowerDevice()end)

@@ -221,6 +221,10 @@ function WeatherLockscreen:addToMainMenu(menu_items)
     menu_items.weather_lockscreen = {
         text = "Weather Dashboard", sorting_hint = "tools",
         sub_item_table = {
+            {text="Robot controls", callback=function() require("dreame_controls").show() end},
+            {text="Connect Dreamehome", callback=function() require("dreame_controls").connect() end},
+            {text="Find Dreamehome robot", callback=function() require("dreame_controls").discover() end},
+            {text="Disconnect Dreamehome", callback=function() require("dreame_controls").disconnect() end},
             {text="Show / hide dashboard", callback=function() self:onToggleWeatherDashboard() end},
             {text="Refresh forecast", callback=function()
                 self.refresh=true
@@ -514,9 +518,9 @@ function WeatherLockscreen:patchDofile()
     end
 end
 
-function WeatherLockscreen:createWeatherWidget()
+function WeatherLockscreen:createWeatherWidget(interactive)
     -- Only the no-key Open-Meteo provider is used, including the no-data screen.
-    local ok, widget=pcall(function() return require("display_week"):create(self) end)
+    local ok, widget=pcall(function() return require("display_week"):create(self,interactive) end)
     if ok then return widget,false end
     logger.err("KindleWeather: creating display failed",widget)
     return nil,true
@@ -648,6 +652,11 @@ function WeatherLockscreen:onNotCharging()
 end
 
 function WeatherLockscreen:onSuspend()
+    self.resume_dashboard_pending=false
+    if self.resume_dashboard_task then
+        UIManager:unschedule(self.resume_dashboard_task)
+        self.resume_dashboard_task=nil
+    end
     logger.dbg("WeatherLockscreen: Device suspending")
 
     -- Let dashboard handle suspend if active
@@ -674,11 +683,34 @@ function WeatherLockscreen:closeWeatherScreensaver()
     end
 end
 
+function WeatherLockscreen:queueDashboardResume()
+    if not self.resume_dashboard_pending or self.resume_dashboard_task then return end
+    self.resume_dashboard_task=function()
+        self.resume_dashboard_task=nil
+        if not self.resume_dashboard_pending or self.simulated_wakeup
+            or not require('fridge_control').enabled() then
+            self.resume_dashboard_pending=false
+            return
+        end
+        -- Resume can precede delayed screensaver cleanup. Wait for its
+        -- OutOfScreenSaver event rather than drawing behind the sleep screen.
+        if Device.screen_saver_mode then return end
+        self.resume_dashboard_pending=false
+        WeatherDashboard:start(self,true)
+    end
+    UIManager:nextTick(self.resume_dashboard_task)
+end
+
+function WeatherLockscreen:onOutOfScreenSaver()
+    self:queueDashboardResume()
+end
+
 function WeatherLockscreen:onResume()
     logger.dbg("WeatherLockscreen: Device resuming")
 
     -- Check if we woke up due to an RTC alarm and execute the action
     if self.simulated_wakeup then
+        self.resume_dashboard_pending=false
         -- Cancel any existing RTC wakeup
         if not Device:isKobo() and self.rtc_wakeup_scheduled and self.wakeup_mgr then
             self.wakeup_mgr:removeTasks(nil, self.rtcRefreshCallback)
@@ -768,6 +800,7 @@ function WeatherLockscreen:onResume()
         UIManager:scheduleIn(5, retryOrSuspend)
     else
         logger.dbg("WeatherLockscreen: Manual wakeup, not from RTC alarm")
+        require('fridge_power').noteActivity()
         -- Close any existing loading widget
         if self.loading_widget then
             UIManager:close(self.loading_widget)
@@ -788,10 +821,19 @@ function WeatherLockscreen:onResume()
             -- Resume frontlight intensity
             WeatherUtils:resumeFrontlight(self)
         end
+        if require('fridge_control').enabled() then
+            self.resume_dashboard_pending=true
+            self:queueDashboardResume()
+        end
     end
 end
 
 function WeatherLockscreen:onCloseWidget()
+    self.resume_dashboard_pending=false
+    if self.resume_dashboard_task then
+        UIManager:unschedule(self.resume_dashboard_task)
+        self.resume_dashboard_task=nil
+    end
     -- Stop dashboard mode
     if self.dashboard_mode_enabled then
         WeatherDashboard:stop(self)

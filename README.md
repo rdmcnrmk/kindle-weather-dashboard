@@ -1,6 +1,6 @@
-# Kindle Weather Dashboard
+# Kindle Home Dashboard
 
-An English, serverless weather dashboard for a jailbroken **Kindle Paperwhite 3**.
+An English, serverless home dashboard with weather and robot controls for a jailbroken **Kindle Paperwhite 3**.
 Designed to hang on a refrigerator, run on battery, and refresh hourly without a
 continuously ticking clock. Weather comes directly from Open-Meteo; no API key,
 subscription, or always-on computer is required.
@@ -93,9 +93,43 @@ To upload later, follow [the GitHub handoff](docs/GITHUB.md).
 
 ## Configuration and battery behavior
 
+### Optional Dreamehome controls (experimental)
+
+Version 1.2 adds **Weather** and **Vacuum** tabs. The Vacuum page contains large
+**Clean all**, **Kitchen** and **Dining** buttons. The Kindle
+contacts Dreamehome directly over HTTPS only when requested; no always-on Mac,
+Home Assistant or bridge is required. Internet access is required. Real-device
+login, TLS compatibility and cleaning remain pending validation.
+
+Open **Weather Dashboard → Connect Dreamehome** in KOReader. Enter your account
+and server region (usually `eu` for a Netherlands account), select your robot,
+then create two cleaning shortcuts named exactly **Kitchen** and **Dining** in
+Dreamehome with the desired rooms and vacuum/mop settings. Open the Vacuum tab.
+The prototype accepts L50 Pro Ultra identifiers `dreame.vacuum.r9445a`,
+`dreame.vacuum.r9445d` and `dreame.vacuum.r9445g` from the upstream model list.
+Physical control remains unverified. **Find Dreamehome robot** in the menu reuses
+the saved session and distinguishes an empty device list from a different model.
+
+Buttons work on the awake dashboard. A deep-sleep screen cannot accept taps:
+wake using the power button and panel mode reopens the interactive dashboard on
+the last selected tab. Cached weather appears without waiting for Wi-Fi. The menu
+entries **Robot controls** and **Show / hide dashboard** remain available.
+On Vacuum, **Check connection** reads shortcut availability without starting
+cleaning. The most recent command/check result remains visible below that button.
+Switching tabs makes no network request. The sleep screen shows weather with an
+explicit sleep label and wake instructions, without interactive-looking tabs;
+the awake dashboard remembers its tab through forecast refreshes. Tap the weather
+page outside the tab bar to dismiss the dashboard. Future tabs can be added to
+`dashboard_tabs.lua` without changing the existing tab widths or hit areas.
+See [Dreamehome setup and limitations](docs/DREAMEHOME.md).
+
 `payload/koreader/plugins/weatherlockscreen.koplugin/fridge_config.lua` contains
 the city, coordinates, hourly interval and minimum battery level. Defaults are
 Eindhoven, metric units, a one-hour interval, and a 15% battery threshold.
+`interactive_idle_seconds` defaults to 300: on battery the interactive dashboard
+waits five minutes after the latest touch before sleeping (the watchdog checks
+every 30 seconds). Opening a dialog, editing login fields and manual wake also
+reset the deadline. The power button can still sleep the device immediately.
 
 The date code currently supports **Europe/Amsterdam only**. Changing a timezone
 string alone does not provide worldwide date/DST support.

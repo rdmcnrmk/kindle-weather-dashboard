@@ -8,7 +8,7 @@ from lupa.lua51 import LuaRuntime
 import resvg_py
 from test_weather import fixture,lua_table,stamp,PLUGIN,ROOT
 
-def render(data,fetched,now,output):
+def render(data,fetched,now,output,robot=False,page='weather',interactive=True):
     lua=LuaRuntime(unpack_returned_tuples=True)
     image=Image.new('RGB',(1072,1448),'white');draw=ImageDraw.Draw(image)
     violations=[];fonts={}
@@ -34,10 +34,16 @@ def render(data,fetched,now,output):
         image.paste(icon,(round(x),round(y)),icon)
     g=lua.globals();g.py_measure=measure;g.py_text=paint_text;g.py_rect=rect;g.py_icon=icon
     g.FIXTURE=lua_table(lua,data);g.FETCHED=fetched;g.NOW=now
+    g.ROBOT=robot
+    g.PAGE=page
+    g.INTERACTIVE=interactive
     lua.execute('package.path='+json.dumps(str(PLUGIN/'?.lua'))+'..";"..package.path')
     lua.execute('''
         os.time=function() return NOW end
-        G_reader_settings={readSetting=function(_,key) if key=="fridge_rtc_supported" then return true end end}
+        G_reader_settings={readSetting=function(_,key)
+            if key=="fridge_rtc_supported" then return true end
+            if key=="dreame_controls_enabled" then return ROBOT end
+        end}
         package.preload['logger']=function() return {err=function(...) error('paint error') end} end
         package.preload['ffi/blitbuffer']=function() return {COLOR_BLACK=0,COLOR_WHITE=255,Color8=function(n)return n end} end
         local Screen={getWidth=function()return 1072 end,getHeight=function()return 1448 end,scaleBySize=function(_,n)return n end}
@@ -71,7 +77,9 @@ def render(data,fetched,now,output):
         end
         package.preload['fridge_source']=function()return {fetch=function()return FIXTURE,FETCHED end}end
         local bb={paintRect=function(_,x,y,w,h,c)py_rect(x,y,w,h,c)end}
-        require('display_week'):create({}):paintTo(bb,0,0)
+        local view=require('display_week'):create({},INTERACTIVE)
+        view.page=PAGE
+        view:paintTo(bb,0,0)
     ''')
     if violations:raise AssertionError(violations)
     image.convert('L').point(lambda v:round(v/17)*17).save(output,optimize=True)
@@ -81,4 +89,13 @@ if __name__=='__main__':
     output=ROOT/'artifacts/preview.png'
     output.parent.mkdir(parents=True,exist_ok=True)
     render(fixture(),stamp(2026,11,21,12),stamp(2026,11,21,12),output)
+    print(output)
+    output=ROOT/'artifacts/preview-sleep.png'
+    render(fixture(),stamp(2026,11,21,12),stamp(2026,11,21,12),output,interactive=False)
+    print(output)
+    output=ROOT/'artifacts/preview-dreame.png'
+    render(fixture(),stamp(2026,11,21,12),stamp(2026,11,21,12),output,robot=True,page='vacuum')
+    print(output)
+    output=ROOT/'artifacts/preview-vacuum-setup.png'
+    render(fixture(),stamp(2026,11,21,12),stamp(2026,11,21,12),output,page='vacuum')
     print(output)

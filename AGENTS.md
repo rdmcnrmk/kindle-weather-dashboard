@@ -1,4 +1,4 @@
-# Working on Kindle Weather Dashboard
+# Working on Kindle Home Dashboard
 
 Read README.md and docs/DEVICE-VALIDATION.md before changing device behavior.
 The repository root is the self-contained project; the surrounding chat workspace
